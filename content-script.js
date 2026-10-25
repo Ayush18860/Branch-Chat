@@ -1,38 +1,17 @@
-// Content script — injected into ChatGPT pages.
 
 console.log("[Branch Chat 1.2.0] Extension loaded on:", window.location.href);
-
-// --- Markdown rendering for assistant replies ---
-//
-// AI replies come back as Markdown text (headings, bold, bullet
-// lists). Left as-is, those symbols show up literally on screen.
-// This converts that Markdown into real HTML formatting. HTML
-// special characters are escaped FIRST, before applying any
-// Markdown formatting, so we only ever render the specific tags we
-// intentionally add below — never anything embedded in the raw
-// reply text itself.
 function escapeHtml(str) {
   const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
   return str.replace(/[&<>"']/g, (c) => map[c]);
 }
 
-// LaTeX math ($...$ inline, $$...$$ display) must be extracted and
-// rendered BEFORE any HTML-escaping happens — raw LaTeX often
-// contains characters like < and > that escaping would corrupt
-// before KaTeX ever sees them. Each rendered formula is swapped out
-// for a plain placeholder token, safely run through the rest of the
-// (HTML-escaping, then markdown) pipeline untouched, then swapped
-// back in as real HTML at the very end.
 function extractMathSegments(rawText) {
   const mathHtml = [];
 
   function renderAndStore(latex, displayMode) {
     let html;
     if (typeof katex === "undefined") {
-      // Defensive fallback — should not normally happen, since
-      // katex.min.js is loaded before this script in the manifest,
-      // but better to show the raw LaTeX than crash if it somehow
-      // isn't available.
+    
       html = escapeHtml(displayMode ? `$$${latex}$$` : `$${latex}$`);
     } else {
       try {
@@ -47,21 +26,11 @@ function extractMathSegments(rawText) {
     return token;
   }
 
-  // Display math ($$...$$) first — it can span multiple lines and
-  // must be pulled out before the inline ($...$) pattern runs,
-  // otherwise the inline regex would partially match inside it.
+ 
   let text = rawText.replace(/\$\$([\s\S]+?)\$\$/g, (_, latex) =>
     renderAndStore(latex.trim(), true)
   );
-  // Inline math — deliberately does not span newlines, to avoid
-  // accidentally swallowing large chunks of prose that merely
-  // contain a stray "$" (e.g. a price). Also requires no whitespace
-  // touching the inside of either delimiter, and no digit right
-  // after the closing "$" — without this, a sentence like "I paid
-  // $5 for it, not $10" gets misread as one inline formula spanning
-  // both prices ("5 for it, not"). Real inline math is essentially
-  // always written tight against its delimiters ($x=5$, not
-  // $ x=5 $), so this is a safe, standard way to tell the two apart.
+
   text = text.replace(
     /\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g,
     (_, latex) => renderAndStore(latex.trim(), false)
@@ -86,10 +55,7 @@ function renderMarkdown(rawText) {
   let html = "";
   let inList = false;
 
-  // Markdown table helpers. A table is: a header row of "| a | b |",
-  // immediately followed by a separator row of "|---|---|" (dashes,
-  // optionally with colons for alignment), then one or more data
-  // rows in the same "| a | b |" format.
+
   function splitTableRow(line) {
     return line
       .trim()
@@ -110,7 +76,6 @@ function renderMarkdown(rawText) {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Table: header row + separator row detected together.
     if (isTableRow(line) && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
       if (inList) {
         html += "</ul>";
@@ -131,7 +96,7 @@ function renderMarkdown(rawText) {
         i++;
       }
       html += "</tbody></table>";
-      continue; // already advanced i past the whole table
+      continue; 
     }
 
     const listItemMatch = line.match(/^\s*[*-]\s+(.*)$/);
@@ -152,9 +117,9 @@ function renderMarkdown(rawText) {
     }
 
     if (line.trim() === "") {
-      // blank line = paragraph spacing, skip adding an empty <p>
+ 
     } else if (/^<h[2-4]>/.test(line.trim())) {
-      html += line; // headings are already block-level, don't wrap in <p>
+      html += line; 
     } else {
       html += `<p>${line}</p>`;
     }
@@ -163,10 +128,6 @@ function renderMarkdown(rawText) {
 
   if (inList) html += "</ul>";
 
-  // Swap the math placeholders back for their actual rendered HTML —
-  // done last, after all other markdown processing, so nothing else
-  // in the pipeline (bold/italic/table regexes etc.) ever touches
-  // real KaTeX-generated markup.
   mathHtml.forEach((renderedHtml, i) => {
     html = html.replace(`@@KATEXPLACEHOLDER${i}@@`, renderedHtml);
   });
@@ -174,7 +135,7 @@ function renderMarkdown(rawText) {
   return html;
 }
 
-// --- Milestone 2: ChatGPT Detection ---
+
 
 function detectChatGPTMessages() {
   const messageElements = document.querySelectorAll("[data-message-author-role]");
@@ -216,53 +177,15 @@ const detectionInterval = setInterval(() => {
   }
 }, 1000);
 
-// --- Milestone 3: Text Selection ---
 
-// --- Gathering Main Chat context ---
-//
-// The Subchat should understand more than just the exact sentence
-// the user highlighted — it should have a sense of the broader
-// conversation that text came from. We don't want to send the
-// ENTIRE Main Chat history on every branch (token costs, and old
-// messages are usually irrelevant) — so we grab the most recent
-// handful of messages, trim each one to a reasonable length, and
-// use that as lightweight context.
-//
-// NOTE: an earlier version used a 400-character-per-message limit,
-// which was too aggressive — long AI responses (e.g. multi-step
-// lists) got cut off mid-list, so the Subchat literally never saw
-// later parts of the list. 1500 chars/message (~6 messages) gives
-// enough room for a typical full response while still staying well
-// under the AI provider's free-tier token-per-minute limits.
-// --- Milestone 7: Persistence ---
-//
-// We save each Subchat's conversation to chrome.storage.local so it
-// survives closing the panel or refreshing the page. Since only one
-// Subchat panel exists at a time (no list/tree of past Subchats
-// yet), we key each saved conversation by a combination of WHICH
-// ChatGPT conversation it's on and WHICH exact text was highlighted.
-// That means: branching from the same text again later — even after
-// a refresh — resumes that same conversation instead of starting
-// over. It does NOT auto-reopen a panel you had open when you left
-// the page; that needs a "list of my Subchats" UI we haven't built.
-
-// A short, simple hash (djb2 algorithm) so storage keys stay compact
-// even for long anchor text, rather than using the raw text itself
-// as part of the key.
 function simpleHash(str) {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
     hash = (hash * 33) ^ str.charCodeAt(i);
   }
-  return (hash >>> 0).toString(36); // unsigned, base36 for compactness
+  return (hash >>> 0).toString(36);
 }
 
-// A branch's storage key now depends on WHERE it was created, not
-// just its text — "parentKey" is "root" for a branch made directly
-// from Main Chat, or the parent Subchat's own storage key for a
-// nested branch. This means the same phrase highlighted in two
-// different places (e.g. inside two different parent Subchats)
-// gets two independent saved conversations, not one shared one.
 function getSubchatStorageKey(anchorText, parentKey = "root") {
   const chatUrl = window.location.href.split("?")[0]; // ignore query params
   return `subchat_${simpleHash(chatUrl + "|" + parentKey + "|" + anchorText)}`;
@@ -276,15 +199,10 @@ async function saveSubchatState(
   parentInfo,
   imageDataUrl
 ) {
-  // We only persist the actual back-and-forth turns (user/assistant),
-  // not the system prompt — that gets rebuilt fresh each time in
-  // case we ever change its wording later.
+
   const turnsOnly = messages.filter((m) => m.role !== "system");
 
-  // Preserve an existing custom name, parent-chain info, and any
-  // inherited image across repeated auto-saves — without this,
-  // every save after a new message would silently overwrite and
-  // erase them.
+
   const existing = await loadSubchatState(storageKey);
 
   await chrome.storage.local.set({
@@ -306,14 +224,6 @@ async function loadSubchatState(storageKey) {
   const result = await chrome.storage.local.get(storageKey);
   return result[storageKey] || null;
 }
-
-// --- Branch index (for the navigation list) ---
-//
-// Each individual branch is saved under its own storage key, but
-// there was previously no single place listing "which branches
-// exist for this conversation" — that's needed for a navigation
-// list. We maintain one small index array per ChatGPT conversation,
-// kept in sync whenever a branch is opened, renamed, or deleted.
 
 function getIndexStorageKey() {
   const chatUrl = window.location.href.split("?")[0];
@@ -361,8 +271,7 @@ function getMainChatContext(maxTotalChars = 30000) {
       ".katex-mathml, button, script, style"
     ).forEach((node) => node.remove());
 
-    // HTML list numbers are often absent from textContent.
-    // Add them explicitly, including lists that start above 1.
+    
     clone.querySelectorAll("ol").forEach((list) => {
       const items = Array.from(list.children)
         .filter((child) => child.tagName === "LI");
@@ -430,18 +339,6 @@ function getMainChatContext(maxTotalChars = 30000) {
   );
 }
 
-// --- Image inheritance (Main Chat → Subchat) ---
-//
-// If the message you're branching from contains an image, we try to
-// carry it into the Subchat so a vision-capable model can actually
-// see it — not just the surrounding text. This locates the image;
-// conversion to base64 reuses imageToDataUrl() (defined further
-// below, alongside the "hover an image directly to branch it" flow)
-// — that's a fetch-based approach using the page's own session/
-// cookies, which is more reliable than reading pixel data via
-// canvas (which browsers block for cross-origin images without
-// permissive server headers). One shared conversion technique
-// rather than two different ones with different failure modes.
 function findImageInMessage(range) {
   const container = range.commonAncestorContainer;
   const element = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
@@ -451,7 +348,7 @@ function findImageInMessage(range) {
   return messageEl.querySelector("img");
 }
 
-// Prefer explicit author roles; scope fallbacks to conversation turns.
+
 function getAssistantMessageContaining(node) {
   const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
   if (!element?.closest || element.closest('#branch-chat-panel, [contenteditable="true"], textarea, input')) return null;
@@ -462,8 +359,7 @@ function getAssistantMessageContaining(node) {
   if (turn?.getAttribute('data-turn') === 'assistant') return turn;
   if (turn && element.closest('.markdown, .prose')) return turn;
 
-  // ChatGPT changes its internal attributes frequently. As a final fallback,
-  // allow selected rendered content in the central conversation area.
+
   const renderedReply = element.closest('.markdown, .prose, [class*="markdown"]');
   if (!renderedReply) return null;
   if (renderedReply.closest('nav, aside, [role="dialog"], [role="menu"], button, a')) return null;
@@ -471,30 +367,13 @@ function getAssistantMessageContaining(node) {
   return conversation ? renderedReply : null;
 }
 
-// Same idea as above, but scoped to OUR OWN Subchat panel's AI
-// reply bubbles — this is what lets you branch again from inside a
-// Subchat, creating a nested Subchat.
 function getSubchatAssistantMessageContaining(node) {
   const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
   if (!element || !element.closest) return null;
   return element.closest("#branch-chat-panel .bc-message.assistant");
 }
 
-// --- Image branching ---
-//
-// Highlighting works for text, but images can't be "selected" the
-// same way — so images get their own trigger: hover over an image
-// Fetching in the content script's context means this request
-// carries the same session/cookies as the ChatGPT page itself — that
-// matters because ChatGPT's image URLs are often signed/session-
-// scoped and wouldn't be fetchable from a plain background-script
-// request with no browsing context at all.
-//
-// NOTE: this used to also power a standalone "hover an image, click
-// to branch it directly" feature. That was removed in favor of
-// keeping things simpler — images are now only inherited
-// automatically when you branch from text that's near one (see
-// findImageInMessage above), not as a separate entry point.
+
 async function imageToDataUrl(imgEl) {
   const response = await fetch(imgEl.src);
   const blob = await response.blob();
@@ -506,16 +385,6 @@ async function imageToDataUrl(imgEl) {
   });
 }
 
-// ChatGPT renders math (via KaTeX) with two layers at once: an
-// accessible MathML copy (class "katex-mathml") meant for screen
-// readers, and the actual visible rendering (class "katex-html").
-// Plain text extraction picks up both, making formulas appear
-// doubled/garbled (e.g. "𝑥(𝑥+1) x(x+1)"). We strip only the
-// ".katex-mathml" duplicate. IMPORTANT: the visible ".katex-html"
-// layer is ALSO marked aria-hidden="true" (screen readers are told
-// to read the MathML instead) — stripping anything aria-hidden, as
-// an earlier version did, deletes the visible formula itself and
-// leaves only surrounding plain text, which is worse.
 function getCleanSelectedText(range) {
   try {
     const wrapper = document.createElement("div");
@@ -523,11 +392,7 @@ function getCleanSelectedText(range) {
     wrapper.querySelectorAll(".katex-mathml").forEach((el) => el.remove());
     return wrapper.textContent.trim().replace(/\s+/g, " ");
   } catch (err) {
-    // Some complex nested content (formulas inside tables/lists) can
-    // make range.cloneContents() misbehave. Falling back to the
-    // browser's raw selection text means Branch Out still works —
-    // possibly with a doubled formula in rare cases — rather than
-    // silently failing to appear at all, which is worse.
+ 
     console.warn(
       "[Branch Chat] Could not clean selected text, falling back to raw selection:",
       err
@@ -536,8 +401,7 @@ function getCleanSelectedText(range) {
   }
 }
 
-// Selection controls intentionally do not depend on ChatGPT's author-role
-// attributes. A selection in readable conversation content can be branched.
+
 let subchatButton = null;
 let latestBranchSelection = null;
 let branchSelectionFrame = null;
@@ -571,7 +435,7 @@ function getCurrentBranchSelection() {
   const nestedEnd = end.closest('#branch-chat-panel .bc-message.assistant');
   const nested = !!nestedStart && nestedStart === nestedEnd;
   if (!nested && (start.closest('#branch-chat-panel') || end.closest('#branch-chat-panel'))) return null;
-  // Permit all readable main-chat text, including lists, code and user messages.
+
   const mainScope = 'main, [role="main"], [data-message-author-role], [data-testid^="conversation-turn-"], [data-turn]';
   if (!nested && (!start.closest(mainScope) || !end.closest(mainScope))) return null;
   const text = getCleanSelectedText(range) || selection.toString().trim();
@@ -611,7 +475,7 @@ async function openBranchSelection(snapshot) {
       catch (error) { console.warn('[Branch Chat] Could not attach image:', error); }
     }
   }
-  // The current selection is useful context even when page attributes change.
+ 
   const context = getMainChatContext() || `Selected conversation excerpt: ${snapshot.text}`;
   openSubchatPanel(snapshot.text, context, null, null, imageDataUrl);
 }
@@ -627,7 +491,7 @@ function positionBranchButton(snapshot) {
   const bounds = subchatButton.getBoundingClientRect();
   const margin = 12;
   const left = Math.max(margin, Math.min(rect.left, window.innerWidth - bounds.width - margin));
-  // ChatGPT's own "Ask ChatGPT" control is normally below the selection.
+
   const above = rect.top - bounds.height - margin;
   const top = above >= margin ? above :
     Math.max(margin, Math.min(rect.bottom + margin, window.innerHeight - bounds.height - margin));
@@ -655,7 +519,7 @@ function showBranchSelection(snapshot) {
     for (const [name, value] of Object.entries(styles)) button.style.setProperty(name, value, 'important');
     for (const eventName of ['pointerdown', 'mousedown']) {
       button.addEventListener(eventName, (event) => {
-        event.preventDefault(); // retain the selected text while clicking
+        event.preventDefault();
         event.stopPropagation();
       });
     }
@@ -665,8 +529,7 @@ function showBranchSelection(snapshot) {
       void openBranchSelection(currentCachedSelection());
     });
     document.body.appendChild(button);
-    // A manual popover participates in the browser's top layer and cannot be
-    // hidden under ChatGPT's selection toolbar, dialogs or stacking contexts.
+
     if (typeof button.showPopover === 'function') {
       button.setAttribute('popover', 'manual');
       try { button.showPopover(); } catch { button.removeAttribute('popover'); }
@@ -687,9 +550,7 @@ function updateBranchSelection() {
   try {
     const snapshot = getCurrentBranchSelection();
     if (snapshot) showBranchSelection(snapshot);
-    // Keep the captured selection if the site's own toolbar takes focus.
-    // A fresh pointer-down elsewhere, Escape, navigation or scrolling it out
-    // of view dismisses it. Never replace a button between press and click.
+ 
     else if (!window.getSelection()?.isCollapsed) removeSubchatButton();
   } catch (error) {
     removeSubchatButton();
@@ -715,7 +576,7 @@ window.addEventListener('pointerdown', (event) => {
 }, true);
 window.addEventListener('pointerup', (event) => {
   if (isBranchControl(event.target)) return;
-  // Capture before a page listener can clear or move the selection.
+  
   updateBranchSelection();
   scheduleBranchSelection(event);
 }, true);
@@ -749,27 +610,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   sendResponse({ ok: true });
 });
 
-// --- Nested Subchats ---
-//
-// `currentPanelInfo` describes whatever Subchat panel is open right
-// now (its anchor text, its storage key, the live conversation
-// history array, etc) — this is what lets branching from INSIDE a
-// Subchat know what its new parent is.
-//
-// `panelNavigationStack` remembers how to reopen each ancestor panel
-// as you go deeper, so the "← Back" button can step back up one
-// level at a time. It only grows through normal forward navigation
-// (branch → branch → branch) within the current browser session —
-// see the note where it's used for the honest limitation on jumping
-// directly into a deep branch out of sequence.
 let currentPanelInfo = null;
 
-// --- Drag/resize safety net ---
-//
-// Whatever drag or resize is currently in progress (if any) stores
-// its own cleanup function here. This gives us a way to force-cancel
-// a stuck drag from OUTSIDE wherever it started — specifically, so
-// pressing Escape always gets you unstuck no matter what caused it.
+
 let activeDragCleanup = null;
 
 document.addEventListener("keydown", (e) => {
@@ -781,15 +624,6 @@ document.addEventListener("keydown", (e) => {
 
 let panelNavigationStack = [];
 
-// --- "Ask about this" (in-Subchat quick follow-up) ---
-//
-// Simpler alternative to nested branching for the common case: the
-// user has a quick doubt about something INSIDE the Subchat's own
-// reply. Instead of spawning a whole new nested panel with its own
-// context-chain complexity, we just pre-fill the current Subchat's
-// input box with a reference to the selected text, so the question
-// becomes a normal next message in the SAME conversation — full
-// natural context, no ambiguity between parent/root sources.
 function askAboutSelection(selectedText) {
   if (!currentPanelInfo || !currentPanelInfo.setInputText) {
     console.warn("[Branch Chat] No active Subchat panel to ask about this text.");
@@ -807,16 +641,6 @@ async function handleNestedBranch(selectedText, capturedRange) {
   const parent = currentPanelInfo;
   const nestedStorageKey = getSubchatStorageKey(selectedText, parent.storageKey);
 
-  // Grab a real excerpt of the parent Subchat's own recent exchange,
-  // so the nested branch has real conversational context from its
-  // immediate parent — not just the parent's anchor text.
-  //
-  // NOTE: an earlier version truncated this to 300 chars/message
-  // and only the last 4 messages — too aggressive, same mistake as
-  // an earlier bug with Main Chat context. A full multi-step answer
-  // (e.g. "step 4 broken into sub-steps") could get cut off before
-  // reaching later sub-steps, so a nested branch would literally not
-  // have the data to reference "the 6th step" of that answer.
   const parentExcerpt = (parent.conversationHistory || [])
     .filter((m) => m.role !== "system")
     .slice(-6)
@@ -832,7 +656,6 @@ async function handleNestedBranch(selectedText, capturedRange) {
     .filter(Boolean)
     .join("\n\n---\n\n");
 
-  // Remember how to get back to the parent panel we're leaving.
   panelNavigationStack.push({
     anchorText: parent.anchorText,
     mainChatContext: parent.mainChatContext,
@@ -846,15 +669,12 @@ async function handleNestedBranch(selectedText, capturedRange) {
   });
 }
 
-// --- Milestone 5: Subchat UI ---
+
 
 function injectSubchatStyles() {
   if (document.getElementById("branch-chat-styles")) return;
 
-  // KaTeX's own stylesheet (bundled locally — see manifest.json's
-  // web_accessible_resources — Manifest V3 doesn't allow loading
-  // remote CSS/JS from a CDN, so this must be a local extension
-  // file referenced via chrome.runtime.getURL()).
+
   const katexLink = document.createElement("link");
   katexLink.rel = "stylesheet";
   katexLink.href = chrome.runtime.getURL("lib/katex/katex.min.css");
@@ -1296,17 +1116,7 @@ async function openSubchatPanel(
 
   document.body.appendChild(subchatPanel);
 
-  // ChatGPT is a React app, and React apps commonly attach their
-  // event listeners at the document level rather than on individual
-  // elements ("event delegation"). Even though our panel is visually
-  // a separate floating box, it's still inserted into the same page
-  // — so clicks, keypresses, etc. happening inside it were bubbling
-  // up and reaching ChatGPT's own page-wide listeners, which appears
-  // to have been confusing their app (e.g. triggering their own
-  // "content failed to load" error state). We stop that bubbling
-  // here so nothing from inside our panel leaks out to the page,
-  // while normal browser behavior (typing, clicking, focus) inside
-  // our own elements is completely unaffected.
+
   ["mousedown", "mouseup", "click", "keydown", "keyup", "keypress", "input", "focusin"].forEach(
     (eventName) => {
       subchatPanel.addEventListener(eventName, (e) => e.stopPropagation());
@@ -1320,9 +1130,7 @@ async function openSubchatPanel(
     closeSubchatPanel();
   });
 
-  // "← Back" only appears on nested Subchats, to step up to the
-  // immediate parent. Top-level Subchats (branched straight from
-  // Main Chat) have nothing to step back to within the panel itself.
+
   const backButton = subchatPanel.querySelector(".bc-back");
   if (panelNavigationStack.length > 0) {
     backButton.style.display = "inline-flex";
@@ -1357,14 +1165,7 @@ async function openSubchatPanel(
     return bubble;
   }
 
-  // IMPORTANT: only frame Main Chat context as "lower priority" when
-  // there's actually a parent branch to prefer instead. An earlier
-  // version applied that framing unconditionally, which meant a
-  // plain (non-nested) Subchat — where Main Chat context is the
-  // ONLY real reference available — was being told to treat its one
-  // and only source of truth as low-priority background. That
-  // caused the AI to ignore Main Chat's actual content even when
-  // explicitly asked to compare against it.
+
   const hasParentBranch = Boolean(parentInfo?.ancestorSummary);
 
   const contextSection = mainChatContext
@@ -1377,15 +1178,7 @@ async function openSubchatPanel(
     ? `\n\n=== PARENT BRANCH CONTEXT (the conversation immediately above this one — HIGHER priority for ambiguous references) ===\n"""${parentInfo.ancestorSummary}"""`
     : "";
 
-  // Disambiguation guidance. Two separate concerns:
-  // 1. Nested case: prefer the closer parent branch over the root
-  //    Main Chat when a reference is ambiguous.
-  // 2. ANY case with Main Chat context: the AI may generate its OWN
-  //    numbered lists during this very conversation (e.g. answering
-  //    "explain the steps to do X"). Those are NOT the same as
-  //    Main Chat's original numbered content, and must not be
-  //    silently conflated — especially once the user explicitly
-  //    says "in Main Chat" or similar, which must always win.
+
   const disambiguationParts = [];
   if (hasParentBranch) {
     disambiguationParts.push(
@@ -1409,47 +1202,19 @@ async function openSubchatPanel(
     },
   ];
 
-  // If this Subchat was branched from an image, it needs to be
-  // --- Persistence: restore a prior conversation for this exact
-  // anchor text (within this exact parent chain) if one exists.
-  //
-  // forcedStorageKey (passed when entering from the navigation list)
-  // is used as-is instead of recomputing it from anchorText — this
-  // guarantees we always operate on the exact same record the list
-  // showed, even in edge cases where recomputing the hash could
-  // theoretically drift from the original (e.g. if anchorText ever
-  // came back empty/corrupted from a bad prior save).
+  
   const storageKey =
     forcedStorageKey || getSubchatStorageKey(anchorText, parentInfo?.parentStorageKey || "root");
   let savedState = await loadSubchatState(storageKey);
 
-  // BUGFIX: previously, a Subchat only got a real saved record after
-  // its first successful reply — opening one and closing it without
-  // sending anything left it listed in the navigation index with NO
-  // actual data behind it. Clicking it later would silently do
-  // nothing (loadSubchatState returned null), and worse, some
-  // operations could end up targeting a mismatched/incomplete
-  // record. Now we immediately write a real (even if empty) record
-  // the moment a brand-new Subchat opens, so every listed branch
-  // always has genuine backing data from the start. This also now
-  // persists any inherited image immediately (not just after the
-  // first message), so it survives closing before ever sending
-  // anything and reopening later via the navigation list.
+
   if (!savedState) {
     await saveSubchatState(storageKey, anchorText, mainChatContext, [], parentInfo, imageDataUrl);
     savedState = await loadSubchatState(storageKey);
   }
 
-  // Resolve which image (if any) should attach to the first message
-  // sent in THIS session — prefer a freshly-passed image (from just
-  // now branching), falling back to whatever was already persisted
-  // (covers reopening via the navigation list, which doesn't pass
-  // the original imageDataUrl argument at all).
   let pendingImageAttachment = imageDataUrl || savedState?.imageDataUrl || null;
 
-  // Keep the navigation-list index in sync every time a panel opens
-  // — this covers both brand-new branches and revisits, and is
-  // self-healing if the index ever falls out of sync.
   await upsertSubchatIndexEntry({
     storageKey,
     anchorText,
@@ -1490,14 +1255,6 @@ async function openSubchatPanel(
     console.log("[Branch Chat] Subchat renamed to:", newName.trim());
   });
 
-  // --- Settings (per-user API key entry) ---
-  //
-  // Each person who installs this extension uses their own free
-  // Gemini key — stored only in their own browser via
-  // chrome.storage.local, never shared, never embedded in the
-  // extension's code. This is what lets multiple people (e.g.
-  // students in the same class) use the extension without competing
-  // for one shared rate limit.
   const settingsButton = subchatPanel.querySelector(".bc-settings");
   settingsButton.addEventListener("click", async () => {
     const { geminiApiKey } = await chrome.storage.local.get("geminiApiKey");
@@ -1505,7 +1262,7 @@ async function openSubchatPanel(
       "Enter your Gemini API key (from aistudio.google.com/apikey). It's stored only in your browser.",
       geminiApiKey || ""
     );
-    if (entered === null) return; // user hit Cancel
+    if (entered === null) return; 
     await chrome.storage.local.set({ geminiApiKey: entered.trim() });
     console.log("[Branch Chat] API key saved.");
   });
@@ -1521,9 +1278,7 @@ async function openSubchatPanel(
     );
     for (const turn of savedState.messages) {
       if (Array.isArray(turn.content)) {
-        // Vision-format message (text + image parts) — pull out
-        // each piece for display rather than passing the raw array
-        // straight to addMessage, which expects a plain string.
+      
         const textPart = turn.content.find((p) => p.type === "text")?.text || "";
         const imagePart = turn.content.find((p) => p.type === "image_url");
         addMessage(textPart, turn.role, imagePart?.image_url?.url || null);
@@ -1538,21 +1293,18 @@ async function openSubchatPanel(
     }
   }
 
-  // Make this panel's identity available globally, so branching from
-  // INSIDE this Subchat (a nested branch) knows what its parent is,
-  // and so "Ask about this" can prefill this panel's input box.
+
   currentPanelInfo = {
     anchorText,
     mainChatContext,
     storageKey,
     parentInfo,
     ancestorSummary: parentInfo?.ancestorSummary || "",
-    conversationHistory, // live reference — stays in sync as messages are pushed
+    conversationHistory,
     setInputText: (text) => {
       input.value = text;
       input.focus();
-      // Put the cursor at the end so the user can just start typing
-      // their actual question right after the quoted reference.
+   
       input.selectionStart = input.selectionEnd = input.value.length;
       autoResizeInput();
     },
@@ -1560,16 +1312,13 @@ async function openSubchatPanel(
 
   async function handleSend() {
     const text = input.value.trim();
-    // Normally we require some text — but if there's an image
-    // waiting to be sent and the user just hits Send with nothing
-    // typed, use a sensible default question rather than blocking.
+  
     if (!text && !pendingImageAttachment) return;
     const effectiveText = text || "What's in this image? Please describe it.";
 
     if (pendingImageAttachment) {
       addMessage(effectiveText, "user", pendingImageAttachment);
-      // Vision message format: content is an array of parts instead
-      // of a plain string, mixing the text question with the image.
+   
       conversationHistory.push({
         role: "user",
         content: [
@@ -1577,7 +1326,7 @@ async function openSubchatPanel(
           { type: "image_url", image_url: { url: pendingImageAttachment } },
         ],
       });
-      pendingImageAttachment = null; // only attached once, to the first message
+      pendingImageAttachment = null;
     } else {
       addMessage(effectiveText, "user");
       conversationHistory.push({ role: "user", content: effectiveText });
@@ -1595,10 +1344,7 @@ async function openSubchatPanel(
       return;
     }
 
-    // Start with an empty assistant bubble and fill it in as chunks
-    // arrive, instead of showing a static "Thinking..." bubble and
-    // waiting for the entire reply at once. This is what makes
-    // replies feel fast even when the full response takes a while.
+
     const replyBubble = addMessage("", "assistant");
     let fullText = "";
 
@@ -1633,25 +1379,14 @@ async function openSubchatPanel(
     }
   });
 
-  // Auto-grow the input box as you type, instead of staying a
-  // cramped single line. Resetting height to "auto" first lets
-  // scrollHeight correctly reflect shrinking too (e.g. after
-  // deleting text or sending a message), not just growing.
+ 
   function autoResizeInput() {
     input.style.height = "auto";
     input.style.height = `${input.scrollHeight}px`;
   }
   input.addEventListener("input", autoResizeInput);
 
-  // --- Voice input ---
-  //
-  // Uses the browser's built-in Speech Recognition API — no
-  // account, no API key, no extra cost. Chrome exposes it as
-  // `webkitSpeechRecognition` (still prefixed even in modern Chrome).
-  // Click the mic to start listening; speech gets transcribed and
-  // appended into the input box; click again (or stop speaking) to
-  // end. The first use triggers a one-time browser mic-permission
-  // prompt for this tab.
+
   const micButton = subchatPanel.querySelector(".bc-mic");
   const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -1687,8 +1422,7 @@ async function openSubchatPanel(
         const transcript = Array.from(event.results)
           .map((result) => result[0].transcript)
           .join(" ");
-        // Append to whatever's already typed, rather than
-        // overwriting — lets you mix typing and voice freely.
+  
         input.value = input.value ? `${input.value} ${transcript}` : transcript;
         input.focus();
         autoResizeInput();
@@ -1714,26 +1448,12 @@ async function openSubchatPanel(
     });
   }
 
-  // --- Dragging ---
   const header = subchatPanel.querySelector(".bc-header");
   header.addEventListener("mousedown", (e) => {
-    // Exclude ANY button in the header (close, back, rename, delete,
-    // and any future ones) rather than naming each one individually
-    // — an earlier version only excluded the close button, so
-    // pressing/holding rename or delete could accidentally start a
-    // drag that never got a clean "mouseup" to end it, leaving the
-    // panel stuck following the cursor.
-    //
-    // e.target can occasionally be a raw text node (e.g. clicking
-    // directly on an emoji glyph inside a button) — text nodes don't
-    // have .closest(), so we walk up to the nearest actual element
-    // first to make this check reliable no matter what was clicked.
+
     const targetEl = e.target.nodeType === Node.TEXT_NODE ? e.target.parentElement : e.target;
     if (targetEl && targetEl.closest("button")) {
-      // Explicitly prevent the browser's own native drag-ghost
-      // behavior (e.g. dragging a button's emoji/text content) from
-      // kicking in on its own — separate from, and in addition to,
-      // skipping our own custom panel-drag logic below.
+
       e.preventDefault();
       return;
     }
@@ -1769,21 +1489,12 @@ async function openSubchatPanel(
     }
     activeDragCleanup = onMouseUp;
 
-    // IMPORTANT: registered with `true` (capturing phase). Our panel
-    // stops mouseup/mousemove from BUBBLING past it (to keep
-    // ChatGPT's page from reacting to clicks/typing inside our UI —
-    // see where subchatPanel's own stopPropagation listeners are
-    // added). Releasing the mouse while still over the panel is the
-    // normal way dragging ends, and that stopPropagation was
-    // silently swallowing this cleanup listener before it could run,
-    // leaving the panel stuck following the cursor forever. Capturing
-    // phase fires top-down BEFORE bubbling-phase stopPropagation can
-    // interfere, so this cleanup now always runs.
+ 
     document.addEventListener("mousemove", onMouseMove, true);
     document.addEventListener("mouseup", onMouseUp, true);
   });
 
-  // --- Resizing ---
+
   const resizeHandle = subchatPanel.querySelector(".bc-resize-handle");
   resizeHandle.addEventListener("mousedown", (e) => {
     e.stopPropagation();
@@ -1820,16 +1531,7 @@ async function openSubchatPanel(
 
   console.log("[Branch Chat] Subchat panel opened. Anchor text:", anchorText);
 }
-// --- Floating navigation icon + branch list ---
-//
-// A persistent icon, always visible regardless of whether a Subchat
-// panel is currently open, letting you browse and jump into any
-// branch made in THIS specific ChatGPT conversation. This replaces
-// the old Main Chat highlight marker as the primary way to find your
-// branches — the marker was too fragile (ChatGPT can silently wipe
-// it out any time it re-renders a message), while this list is
-// driven entirely by our own stored index, so it can't be lost that
-// way.
+
 
 let navListPanel = null;
 
@@ -1848,15 +1550,6 @@ async function toggleNavListPanel(iconEl) {
 
   const rawIndex = await getSubchatIndex();
 
-  // Self-healing cleanup: an entry can only legitimately exist in
-  // the index if it has real backing data (guaranteed for every
-  // branch created going forward — see the immediate-save fix in
-  // openSubchatPanel). Any entry that DOESN'T have real data behind
-  // it is a leftover from before that fix (or some other edge case)
-  // — a "ghost" that could never be opened, and previously had no
-  // way to be removed either, since delete only lived inside a
-  // panel that could never open. We verify and prune those here,
-  // every time the list is opened, so they can't get stuck forever.
   const verified = await Promise.all(
     rawIndex.map(async (entry) => ({
       entry,
@@ -1875,7 +1568,7 @@ async function toggleNavListPanel(iconEl) {
     await Promise.all(ghosts.map((g) => removeFromSubchatIndex(g.storageKey)));
   }
 
-  index.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)); // most recent first
+  index.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
   navListPanel = document.createElement("div");
   navListPanel.className = "bc-branch-menu bc-nav-list";
@@ -1886,8 +1579,7 @@ async function toggleNavListPanel(iconEl) {
     navListPanel.innerHTML = index
       .map((entry) => {
         const label = entry.name || entry.anchorText?.slice(0, 60) || "Branch";
-        // A nested branch (has a parent) gets a small prefix hint —
-        // full tree indentation is a possible later improvement.
+    
         const prefix = entry.parentStorageKey ? "↳ " : "";
         return `<button class="bc-menu-item bc-nav-item" data-storage-key="${entry.storageKey}">${prefix}${escapeHtml(label)}</button>`;
       })
@@ -1925,13 +1617,7 @@ async function toggleNavListPanel(iconEl) {
           }
         : null;
 
-      // Entering directly from the list, not by walking in normally
-      // — reset the back-navigation stack, same caveat as the old
-      // marker's "Enter this branch" had.
-      //
-      // We pass `key` explicitly as the forced storage key — this is
-      // exactly the record the list showed, so there's no chance of
-      // it drifting from a recomputed hash.
+     
       panelNavigationStack = [];
       openSubchatPanel(saved.anchorText, saved.mainChatContext, parentInfo, key);
     });
@@ -1939,7 +1625,7 @@ async function toggleNavListPanel(iconEl) {
 }
 
 function initFloatingNavIcon() {
-  if (document.getElementById("branch-chat-nav-icon")) return; // already injected
+  if (document.getElementById("branch-chat-nav-icon")) return; 
   injectSubchatStyles();
 
   const icon = document.createElement("button");
@@ -1974,9 +1660,7 @@ function initFloatingNavIcon() {
       const deltaX = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
 
-      // Small movements shouldn't count as a drag — only once it
-      // moves a few pixels do we treat this as repositioning rather
-      // than a click.
+
       if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
         dragged = true;
       }
@@ -1992,16 +1676,14 @@ function initFloatingNavIcon() {
 
       icon.style.left = `${newLeft}px`;
       icon.style.top = `${newTop}px`;
-      icon.style.bottom = "auto"; // switch off the initial bottom-anchored positioning once moved
-      removeNavListPanel(); // close any open list while actively dragging
+      icon.style.bottom = "auto";
+      removeNavListPanel(); 
     }
-
     function onMouseUp() {
       document.removeEventListener("mousemove", onMouseMove, true);
       document.removeEventListener("mouseup", onMouseUp, true);
       activeDragCleanup = null;
-      // Only open the list on a genuine click — if this mousedown
-      // turned into a real drag, don't also toggle the list open.
+
       if (!dragged) {
         const snapshot = getCurrentBranchSelection() || currentCachedSelection();
         if (snapshot) void openBranchSelection(snapshot);
@@ -2010,8 +1692,7 @@ function initFloatingNavIcon() {
     }
     activeDragCleanup = onMouseUp;
 
-    // Capturing phase for the same reason as the panel's drag/resize
-    // — see the note there about stopPropagation swallowing cleanup.
+   
     document.addEventListener("mousemove", onMouseMove, true);
     document.addEventListener("mouseup", onMouseUp, true);
   });
@@ -2030,7 +1711,7 @@ document.addEventListener("mousedown", (e) => {
 });
 
 initFloatingNavIcon();
-// Final update: Branch 🌿 button below Ask ChatGPT.
+
 (() => {
   const LEAF = "\u{1F33F}";
 
@@ -2060,7 +1741,7 @@ initFloatingNavIcon();
 
     const margin = 12;
 
-    // Reserve space for Ask ChatGPT above our button.
+   
     const preferredTop = rect.bottom + 56;
 
     const left = Math.max(
@@ -2109,7 +1790,7 @@ initFloatingNavIcon();
       snapshot.nested ? "Ask about this" : "Branch"
     );
 
-    // Recalculate placement after changing the label.
+    
     positionBranchButton(snapshot);
   };
 
@@ -2121,7 +1802,7 @@ initFloatingNavIcon();
     floatingIcon.textContent = LEAF;
   }
 })();
-// Branch Chat: context capture and inspection fix.
+
 (() => {
   const LIMIT = 30000;
   let captureInfo = { count: 0, truncated: false };
@@ -2173,8 +1854,7 @@ initFloatingNavIcon();
   getMainChatContext = function (maxTotalChars = LIMIT) {
     const scope = document.querySelector("main, [role='main']");
     const root =  document;
-    // Prefer complete conversation turns: some layouts put message
-    // content outside the element carrying the author-role attribute.
+   
     let nodes = Array.from(root.querySelectorAll(
        "[data-testid^='conversation-turn-'], " +       
   "article[data-turn], " +
@@ -2198,7 +1878,7 @@ initFloatingNavIcon();
       !node.closest("#branch-chat-panel, .bc-nav-list, nav")
     );
 
-    // Keep outermost matched elements to avoid duplicate messages.
+ 
     nodes = nodes.filter((node) =>
       !nodes.some((other) => other !== node && other.contains(node))
     );
@@ -2249,7 +1929,6 @@ initFloatingNavIcon();
     const freshContext = getMainChatContext();
     const info = { ...captureInfo };
 
-    // Ignore the old selected-text-only fallback as "full context".
     const usableSavedContext =
       typeof savedContext === "string" &&
       !savedContext.startsWith("Selected conversation excerpt:")
@@ -2270,7 +1949,6 @@ initFloatingNavIcon();
     const active = currentPanelInfo;
     if (!panel || !active || active.anchorText !== anchorText) return;
 
-    // Replace conflicting background-only wording.
     const system = active.conversationHistory.find(
       (message) => message.role === "system"
     );
@@ -2326,7 +2004,7 @@ initFloatingNavIcon();
     details.append(summary, preview);
     panel.querySelector(".bc-context-card")?.append(details);
 
-    // Persist refreshed context without changing saved messages.
+ 
     const existing = await loadSubchatState(active.storageKey);
     if (existing) {
       await chrome.storage.local.set({
