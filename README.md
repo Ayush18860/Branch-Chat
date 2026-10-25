@@ -14,6 +14,17 @@ Branch Chat is a Chrome extension that lets you select part of a ChatGPT convers
 - **Personal Gemini API key** — Connect the extension using your own Gemini API key from Google AI Studio.
 - **Local storage** — Your API key and branch history are stored in your current Chrome profile.
 - **Context menu fallback** — Right-click selected text and choose **Branch 🌿** if the selection button does not appear.
+- ### Context-aware branching
+
+Branch Chat inherits the ChatGPT conversation currently loaded on the page, including content above and below your selection. This lets you compare ideas, reference numbered steps, and ask follow-up questions without copying the original answer.
+
+- **Up to 30,000 characters of main-chat context** per branch.
+- **Numbered list support** preserves references such as “tip 3” or “step 4.”
+- **Context preview** shows the captured text and character count.
+- **Context refresh** captures the currently loaded conversation when a branch opens.
+- **Long conversation handling** retains the beginning and end when captured content exceeds the limit.
+
+Only supported message containers currently loaded on the page can be captured. Some middle content is omitted when the 30,000-character limit is exceeded. This limit covers inherited main-chat text; branch history and other request content are additional.
 
 ## Install
 
