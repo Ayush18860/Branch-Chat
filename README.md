@@ -4,21 +4,29 @@ Branch Chat is a Chrome extension that lets you select part of a ChatGPT convers
 
 ## Features
 
-- Select conversation text and click **Branch 🌿**.
-- Continue in a movable, resizable Gemini side panel.
-- Reopen, rename, and delete locally saved branches.
-- Use the floating leaf or right-click selection menu as alternate entry points.
-- Render Markdown, tables, and KaTeX math.
-- Use your own Gemini API key; no key is included in this repository.
+- **Branch from selected text** — Select any text in a ChatGPT conversation and click **Branch 🌿** to start a separate Gemini conversation from that point.
+- **Floating branch icon** — Use the floating 🌿 button for quick access while browsing ChatGPT.
+- **Independent branch chats** — Explore a different question or idea without changing the original ChatGPT conversation.
+- **Saved chat history** — Branch conversations are stored locally in Chrome and remain available when you return.
+- **Rename branches** — Give each saved branch a custom name to keep conversations organized.
+- **Voice input** — Use your microphone to speak messages instead of typing them.
+- **Markdown and math support** — Responses can display formatted text, tables, code blocks, and KaTeX mathematical expressions.
+- **Personal Gemini API key** — Connect the extension using your own Gemini API key from Google AI Studio.
+- **Local storage** — Your API key and branch history are stored in your current Chrome profile.
+- **Context menu fallback** — Right-click selected text and choose **Branch 🌿** if the selection button does not appear.
 
 ## Install
 
-1. Download this repository as a ZIP and extract it.
-2. Open `chrome://extensions`.
-3. Enable **Developer mode** and click **Load unpacked**.
-4. Select the folder containing `manifest.json`.
-5. Refresh ChatGPT.
-6. Select text, click **Branch 🌿**, then use **?** to enter a key from [Google AI Studio](https://aistudio.google.com/api-keys).
+1. Get your Gemini API key from [Google AI Studio](https://aistudio.google.com/api-keys). Sign in, click **Create API key**, and copy the key.
+2. On this GitHub page, click **Code → Download ZIP**.
+3. Find the downloaded ZIP file and **extract it**. Keep the extracted folder somewhere permanent, such as Documents. Do not select the ZIP file in Chrome.
+4. Open Chrome and go to `chrome://extensions`.
+5. Turn on **Developer mode** (top right), then click **Load unpacked**.
+6. Select the **extracted folder containing `manifest.json`**. If extraction created two nested folders, open the outer folder and select the inner one containing `manifest.json`.
+7. Close all Chrome windows, reopen Chrome, and open ChatGPT.
+8. Select text in a ChatGPT conversation and click **Branch 🌿**. In the branch panel, click **⚙︎**, paste your Gemini API key, and save it. If **Branch 🌿** does not appear, refresh the ChatGPT tab.
+
+Keep your extracted folder on your computer—Chrome loads the extension from there. Never share your API key or upload it to GitHub.
 
 Do not share or commit your key. It is saved in `chrome.storage.local` for the current Chrome profile.
 
