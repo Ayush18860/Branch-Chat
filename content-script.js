@@ -2172,8 +2172,7 @@ initFloatingNavIcon();
 
   getMainChatContext = function (maxTotalChars = LIMIT) {
     const scope = document.querySelector("main, [role='main']");
-    const root = scope || document;
-
+    const root =  document;
     // Prefer complete conversation turns: some layouts put message
     // content outside the element carrying the author-role attribute.
     let nodes = Array.from(root.querySelectorAll(
@@ -2196,7 +2195,7 @@ initFloatingNavIcon();
     }
 
     nodes = nodes.filter((node) =>
-      !node.closest("#branch-chat-panel, .bc-nav-list, nav, aside")
+      !node.closest("#branch-chat-panel, .bc-nav-list, nav")
     );
 
     // Keep outermost matched elements to avoid duplicate messages.
