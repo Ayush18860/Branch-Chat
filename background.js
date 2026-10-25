@@ -1,4 +1,4 @@
-// A browser-owned fallback works even when ChatGPT changes its selection UI.
+
 const BRANCH_MENU_ID = 'branch-chat-selected-text';
 function installBranchMenu() {
   chrome.contextMenus.removeAll(() => {
@@ -22,24 +22,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   });
 });
 
-// Background service worker — Gemini API variant.
-//
-// content-script.js is IDENTICAL between this and the Groq version —
-// it only knows "send {type, apiKey, messages}, get back
-// {type: chunk/done/error}". This file is the only place that
-// actually speaks Gemini's specific request/response format, which
-// is meaningfully different from Groq's OpenAI-compatible one:
-// different message shape (contents/parts instead of messages/
-// content), different auth (API key as a URL param, not a Bearer
-// header), and a different streaming response format.
-
 const MODEL = "gemini-3.1-flash-lite";
-// NOTE: Gemini model availability has been volatile — several other
-// model IDs (gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-flash-lite)
-// stopped working for this project earlier in its development. This
-// was the last CONFIRMED WORKING model at that time. If this stops
-// working, check https://ai.google.dev/gemini-api/docs/models for
-// the current recommended Flash/Flash-Lite model.
+
 const API_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -51,12 +35,7 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// Converts our internal {role, content} message format into Gemini's
-// {contents: [{role, parts}]} shape. `content` can be a plain string,
-// or (for messages with an attached image) an array like
-// [{type: "text", text}, {type: "image_url", image_url: {url}}] —
-// the same shape used for the Groq/OpenAI-compatible version, so
-// content-script.js doesn't need to know which provider is active.
+
 function convertMessagesToGeminiFormat(messages) {
   const systemMessage = messages.find((m) => m.role === "system");
   const turns = messages.filter((m) => m.role !== "system");
@@ -71,8 +50,7 @@ function convertMessagesToGeminiFormat(messages) {
       parts = m.content.map((part) => {
         if (part.type === "text") return { text: part.text };
         if (part.type === "image_url") {
-          // Our stored image is a data URL: "data:image/png;base64,XXXX".
-          // Gemini wants the mime type and raw base64 separated out.
+          
           const match = part.image_url.url.match(/^data:(image\/\w+);base64,(.+)$/);
           if (match) {
             return { inline_data: { mime_type: match[1], data: match[2] } };
@@ -106,8 +84,7 @@ async function streamCompletion(port, apiKey, messages) {
 
   try {
     const body = convertMessagesToGeminiFormat(messages);
-    // alt=sse gives us Server-Sent Events for streaming, matching
-    // the incremental "chunk" delivery content-script.js expects.
+  
     const url = `${API_ENDPOINT_BASE}/${MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
     const response = await fetch(url, {
@@ -134,7 +111,7 @@ async function streamCompletion(port, apiKey, messages) {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop(); // keep any incomplete trailing line for next round
+      buffer = lines.pop(); 
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -148,8 +125,7 @@ async function streamCompletion(port, apiKey, messages) {
           const delta = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
           if (delta) port.postMessage({ type: "chunk", content: delta });
         } catch {
-          // Incomplete/partial JSON mid-stream — safe to skip, the
-          // rest arrives in a following chunk.
+         
         }
       }
     }
